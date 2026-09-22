@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BTC Pulse · 实时比特币订单流终端</title>
+  <meta name="description" content="实时比特币订单流终端：真实盘口、成交流、巨鲸警报、资金费率与持仓量，多交易所数据容灾，像游戏一样有趣，像终端一样专业。" />
+  <meta name="theme-color" content="#f5f6f8" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23f7931a'/%3E%3Ctext x='32' y='44' font-size='34' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'%3E%E2%82%BF%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+
+  <!-- ======= 顶栏 ======= -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">₿</div>
+      <div>
+        <div class="brand-name">BTC Pulse</div>
+        <div class="brand-sub">Live Order-Flow Terminal</div>
+      </div>
+    </div>
+
+    <div class="topbar-spacer"></div>
+
+    <span class="top-chip" id="chip-latency">WS -- ms</span>
+    <span class="top-chip" id="chip-clock">--:--:--</span>
+
+    <div class="conn">
+      <span class="dot" id="conn-dot"></span>
+      <span id="conn-text">连接中…</span>
+    </div>
+
+    <button class="icon-btn" id="btn-sound" title="巨鲸警报音效开关" aria-label="切换警报音效">🔔</button>
+  </header>
+
+  <!-- ======= 数据源降级提示 ======= -->
+  <div class="alert-strip" id="alert-strip"></div>
+
+  <!-- ======= 行情条 ======= -->
+  <div class="ticker-strip" id="ticker-strip">
+    <div class="ts-item"><span class="ts-label">24h高</span><span class="ts-value" id="ts-high">--</span></div>
+    <span class="ts-sep">·</span>
+    <div class="ts-item"><span class="ts-label">24h低</span><span class="ts-value" id="ts-low">--</span></div>
+    <span class="ts-sep">·</span>
+    <div class="ts-item"><span class="ts-label">24h量(USDT)</span><span class="ts-value" id="ts-vol">--</span></div>
+    <span class="ts-sep">·</span>
+    <div class="ts-item"><span class="ts-label">24h成交笔数</span><span class="ts-value" id="ts-trades">--</span></div>
+    <span class="ts-sep">·</span>
+    <div class="ts-item"><span class="ts-label">资金费率</span><span class="ts-value" id="ts-fr">--</span></div>
+    <span class="ts-sep">·</span>
+    <div class="ts-item"><span class="ts-label">持仓量</span><span class="ts-value" id="ts-oi">--</span></div>
+    <span class="ts-sep">·</span>
+    <div class="ts-item"><span class="ts-label">标记价</span><span class="ts-value" id="ts-mark">--</span></div>
+    <span class="ts-sep">·</span>
+    <div class="ts-item"><span class="ts-label">价差指数</span><span class="ts-value" id="ts-basis">--</span></div>
+  </div>
+
+  <!-- ======= 主布局 ======= -->
+  <main class="layout">
+
+    <!-- 左列：订单簿 -->
+    <div class="col col-left">
+      <section class="card ob-card">
+        <div class="card-hd">
+          <span class="card-title">Order Book · BTC/USDT</span>
+          <span class="card-note">Binance L1</span>
+        </div>
+
+        <div class="ob-head">
+          <span>价格</span><span>数量 (BTC)</span><span>合计 (BTC)</span>
+        </div>
+
+        <div class="ob-body">
+          <div class="ob-side" id="ob-asks" aria-label="卖盘"></div>
+
+          <div class="ob-mid">
+            <span class="ob-mid-price" id="ob-mid-price">--</span>
+            <span class="ob-spread">点差 <b id="ob-spread">--</b><br/>买压 <b id="ob-pressure">--</b></span>
+          </div>
+
+          <div class="ob-side" id="ob-bids" aria-label="买盘"></div>
+
+          <div class="ob-empty" id="ob-empty">正在连接交易所，等待盘口快照…</div>
+        </div>
+      </section>
+    </div>
+
+    <!-- 中列：价格 + 图表 + 成交流 -->
+    <div class="col col-mid">
+      <section class="card price-card">
+        <div class="price-hero" id="price-hero">
+          <div>
+            <div class="price-main" id="price-main">$<span id="price-int">--</span><span class="cents" id="price-cents"></span></div>
+          </div>
+          <span class="chg-chip" id="chg-chip">--</span>
+          <div class="hero-side">
+            <div class="mood-wrap">
+              <span class="mood-label">市场情绪</span>
+              <div class="mood-gauge"><span class="mood-knob" id="mood-knob"></span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card chart-card">
+        <div class="card-hd">
+          <span class="card-title">价格走势 · 聚合成交</span>
+          <span class="card-note" id="chart-note">实时累积</span>
+        </div>
+        <div class="tf-tabs" id="tf-tabs">
+          <button class="tf-tab" data-tf="1">1m</button>
+          <button class="tf-tab active" data-tf="5">5m</button>
+          <button class="tf-tab" data-tf="15">15m</button>
+          <button class="tf-tab" data-tf="60">1h</button>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="cv-price"></canvas>
+          <div class="chart-empty" id="chart-empty">正在等待实时成交…</div>
+          <div class="chart-empty" id="chart-err" style="display:none">图表数据加载失败，将自动重试</div>
+        </div>
+      </section>
+
+      <section class="card tape-card">
+        <div class="card-hd">
+          <span class="card-title">成交流 Live Trades</span>
+          <span class="card-note" id="tape-count">0 笔</span>
+        </div>
+        <div class="tape-legend">
+          <i><span class="sw l"></span>大单 ≥ $20k</i>
+          <i><span class="sw xl"></span>巨鲸 ≥ $100k</i>
+        </div>
+        <div class="tape-list" id="tape-list">
+          <div class="tape-empty" id="tape-empty">正在订阅实时成交流…</div>
+        </div>
+      </section>
+    </div>
+
+    <!-- 右列：强度计 / 统计 / 巨鲸 / 任务 -->
+    <div class="col col-right">
+      <section class="card">
+        <div class="card-hd">
+          <span class="card-title">买卖强度 · 近60秒</span>
+          <span class="card-note" id="intensity-note">--</span>
+        </div>
+        <div class="intensity-wrap">
+          <canvas class="intensity-canvas" id="cv-intensity" height="128"></canvas>
+          <div class="intensity-meta">
+            <span id="intensity-buy">买 --</span>
+            <span id="intensity-sell">卖 --</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-hd">
+          <span class="card-title">市场统计</span>
+          <span class="card-note" id="stat-refresh">--</span>
+        </div>
+        <div class="stat-grid">
+          <div class="stat-cell">
+            <div class="stat-k">现货中间价 <span id="src-spot"></span></div>
+            <div class="stat-v" id="st-mid">--</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-k">合约标记价 <span id="src-perp"></span></div>
+            <div class="stat-v" id="st-mark">--</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-k">资金费率 / 8h</div>
+            <div class="stat-v" id="st-fr">--</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-k">年化资金费</div>
+            <div class="stat-v" id="st-fry">--</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-k">持仓量 (BTC) <span id="src-oi"></span></div>
+            <div class="stat-v" id="st-oi">--</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-k">持仓量 (USD)</div>
+            <div class="stat-v" id="st-oiusd">--</div>
+          </div>
+          <div class="stat-cell wide">
+            <div class="stat-k">数据源状态</div>
+            <div class="src-badges" id="src-badges">
+              <span class="src-badge"><i></i>Binance 镜像</span>
+              <span class="src-badge"><i></i>OKX</span>
+              <span class="src-badge"><i></i>Gate</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-hd">
+          <span class="card-title">巨鲸警报 Whale Alerts</span>
+          <span class="card-note" id="whale-note">≥ $100k</span>
+        </div>
+        <div class="whale-list" id="whale-list">
+          <div class="whale-empty" id="whale-empty"><span class="wait-whale">🐳</span>监听中… 大额成交出现时会在这里亮起</div>
+        </div>
+        <div class="score-row">
+          <span class="score-label">今日捕获巨鲸</span>
+          <span class="score-value"><span id="whale-count">0</span> 🐳</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-hd">
+          <span class="card-title">观测任务 Quests</span>
+          <span class="card-note">自动点亮</span>
+        </div>
+        <div class="quest-list" id="quest-list"></div>
+        <div class="score-row">
+          <span class="score-label">观测积分</span>
+          <span class="score-value"><span id="score">0</span> pts</span>
+        </div>
+      </section>
+    </div>
+
+  </main>
+
+  <!-- ======= 页脚 ======= -->
+  <footer class="footer">
+    <span>数据来源：Binance 公共镜像 · OKX · Gate（公开行情，无 API Key）</span>
+    <span>延迟：交易所直连，未含历史 K 线回补</span>
+    <span class="foot-right">
+      <a href="https://github.com/lovexw/btc-orderflow" target="_blank" rel="noopener">GitHub</a>
+      · Powered by Cloudflare Workers
+      · <a href="/api/health">API 状态</a>
+      · 仅供研究参考，不构成投资建议
+    </span>
+  </footer>
+
+  <div class="toast-zone" id="toast-zone" aria-live="polite"></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

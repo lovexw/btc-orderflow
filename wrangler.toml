@@ -1,0 +1,13 @@
+name = "btc-orderflow"
+main = "src/worker.js"
+compatibility_date = "2026-08-01"
+
+# 静态资源目录：public/ 下所有文件由 Worker 自动托管
+[assets]
+directory = "./public"
+# 未命中静态文件的请求交给 Worker 的 fetch 处理（/api/* 与 SSRF 防护）
+run_worker_first = ["/api/*"]
+binding = "ASSETS"
+
+[observability]
+enabled = true
