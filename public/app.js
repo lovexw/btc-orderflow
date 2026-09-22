@@ -22,7 +22,7 @@ const fmtUsd = (n, d = 2) =>
   n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 
 function fmtCompact(n) {
-  if (!isFinite(n)) return "--";
+  if (n == null || !isFinite(n)) return "--";
   const abs = Math.abs(n);
   if (abs >= 1e9) return (n / 1e9).toFixed(2) + "B";
   if (abs >= 1e6) return (n / 1e6).toFixed(2) + "M";
@@ -30,7 +30,7 @@ function fmtCompact(n) {
   return n.toFixed(0);
 }
 
-const fmtBtc = (n) => (n >= 100 ? n.toFixed(1) : n >= 1 ? n.toFixed(2) : n.toFixed(4));
+const fmtBtc = (n) => (n == null || !isFinite(n) ? "--" : n >= 100 ? n.toFixed(1) : n >= 1 ? n.toFixed(2) : n.toFixed(4));
 const hhmmss = (ts) => new Date(ts).toTimeString().slice(0, 8);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -804,7 +804,7 @@ function updateCandle(t) {
 
 async function loadKlines() {
   try {
-    const res = await fetch("/api/klines?tf=" + S.tfMin, { cache: "no-store" });
+    const res = await fetch("/api/klines?tf=" + (S.tfStr || "5m"), { cache: "no-store" });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const d = await res.json();
     if (!Array.isArray(d.rows) || !d.rows.length) throw new Error("empty");
@@ -827,6 +827,8 @@ function setTf(minutes) {
   S.tf = minutes * 60 * 1000;
   S.candles = [];
   S.candleSrc = null;
+  const tfStr = minutes >= 60 ? minutes / 60 + "h" : minutes + "m"; // API 参数格式：1m/5m/15m/1h
+  S.tfStr = tfStr;
   $("chart-empty").style.display = "grid";
   $("chart-empty").classList.remove("hide");
   $("chart-empty").textContent = "加载 " + (minutes >= 60 ? minutes / 60 + "h" : minutes + "m") + " 历史K线…";

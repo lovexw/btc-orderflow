@@ -3,9 +3,10 @@
  *
  * 职责：
  *  1. 托管 public/ 静态站点（经 [assets] binding）
- *  2. /api/summary — 服务端聚合多交易所行情（现货中间价 + 合约资金费率/持仓量）
- *  3. /api/klines  — K 线历史回补（Binance 镜像 → OKX 容灾）
- *  4. SSRF 防护：仅允许代码内白名单交易所域名；路径写死，不接受用户输入拼 URL
+ *  2. /api/summary — 多源聚合行情（现货三源容灾 + 合约资金费率/持仓量 + 24h 统计兜底链）
+ *  3. /api/klines  — K 线历史回补（Binance 镜像 → OKX → Gate 三源容灾）
+ *  4. /api/diag    — 上游健康诊断（状态码，无敏感信息）
+ *  5. SSRF 防护：仅允许代码内白名单交易所域名；路径写死，不接受用户输入拼 URL
  */
 
 const UPSTREAMS = {
@@ -29,8 +30,9 @@ const CORS = {
   "Cache-Control": "no-store",
 };
 
-// 最近一次成功的 summary（上游全挂时兜底返回，标注 stale）
+// 最近一次成功 summary（上游全挂时兜底返回，标注 stale）+ 上游诊断
 let lastGoodSummary = null;
+const lastDiag = {}; // label -> {status, ok, at}
 
 export default {
   async fetch(request) {
@@ -40,14 +42,9 @@ export default {
       return new Response(null, { status: 204, headers: CORS });
     }
 
-    if (url.pathname === "/api/summary") {
-      return handleSummary();
-    }
-
-    if (url.pathname === "/api/klines") {
-      return handleKlines(url.searchParams.get("tf") || "5m");
-    }
-
+    if (url.pathname === "/api/summary") return handleSummary();
+    if (url.pathname === "/api/klines") return handleKlines(url.searchParams.get("tf") || "5m");
+    if (url.pathname === "/api/diag") return jsonResponse({ ts: Date.now(), diag: lastDiag });
     if (url.pathname === "/api/health") {
       return jsonResponse({ ok: true, ts: Date.now(), service: "btc-orderflow" });
     }
@@ -63,8 +60,12 @@ function jsonResponse(obj, status = 200) {
   });
 }
 
-/** 单个上游抓取：超时 4s，失败返回 null（绝不抛出） */
-async function safeFetch(url, ms = 4000) {
+/** 带诊断的上游抓取：超时 4s，失败返回 null（绝不抛出） */
+async function safeFetch(label, url, ms = 4000) {
+  if (!ALLOWED_HOSTS.has(safeHost(url))) {
+    lastDiag[label] = { status: 0, ok: false, at: Date.now(), err: "blocked_host" };
+    return null;
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
@@ -73,27 +74,23 @@ async function safeFetch(url, ms = 4000) {
       cf: { cacheTtl: 0, cacheEverything: false },
       headers: { "User-Agent": "btc-orderflow/1.0", Accept: "application/json" },
     });
+    lastDiag[label] = { status: res.status, ok: res.ok, at: Date.now() };
     if (!res.ok) return null;
     return await res.json();
-  } catch {
+  } catch (e) {
+    lastDiag[label] = { status: 0, ok: false, at: Date.now(), err: e?.name || "error" };
     return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-/** SSRF 防护：仅允许白名单交易所域名 */
-function isAllowed(url) {
+function safeHost(url) {
   try {
-    return ALLOWED_HOSTS.has(new URL(url).host);
+    return new URL(url).host;
   } catch {
-    return false;
+    return "";
   }
-}
-
-async function safeFetchGuarded(url) {
-  if (!isAllowed(url)) return null;
-  return safeFetch(url);
 }
 
 // ---------------------------------------------------------------------------
@@ -102,14 +99,14 @@ async function safeFetchGuarded(url) {
 
 async function handleSummary() {
   const [spotB, spotO, spotG, fapiB, oiB, okxTicker, okxOI, okxFR] = await Promise.all([
-    safeFetchGuarded(`${UPSTREAMS.binanceSpot}/api/v3/ticker/24hr?symbol=BTCUSDT`),
-    safeFetchGuarded(`${UPSTREAMS.okx}/api/v5/market/ticker?instId=BTC-USDT`),
-    safeFetchGuarded(`${UPSTREAMS.gate}/api/v4/spot/tickers?currency_pair=BTC_USDT`),
-    safeFetchGuarded(`${UPSTREAMS.binanceFapi}/fapi/v1/premiumIndex?symbol=BTCUSDT`),
-    safeFetchGuarded(`${UPSTREAMS.binanceFapi}/fapi/v1/openInterest?symbol=BTCUSDT`),
-    safeFetchGuarded(`${UPSTREAMS.okx}/api/v5/market/ticker?instId=BTC-USDT-SWAP`),
-    safeFetchGuarded(`${UPSTREAMS.okx}/api/v5/public/open-interest?instId=BTC-USDT-SWAP`),
-    safeFetchGuarded(`${UPSTREAMS.okx}/api/v5/public/funding-rate?instId=BTC-USDT-SWAP`),
+    safeFetch("binance_t24", `${UPSTREAMS.binanceSpot}/api/v3/ticker/24hr?symbol=BTCUSDT`),
+    safeFetch("okx_spot", `${UPSTREAMS.okx}/api/v5/market/ticker?instId=BTC-USDT`),
+    safeFetch("gate_spot", `${UPSTREAMS.gate}/api/v4/spot/tickers?currency_pair=BTC_USDT`),
+    safeFetch("binance_prem", `${UPSTREAMS.binanceFapi}/fapi/v1/premiumIndex?symbol=BTCUSDT`),
+    safeFetch("binance_oi", `${UPSTREAMS.binanceFapi}/fapi/v1/openInterest?symbol=BTCUSDT`),
+    safeFetch("okx_swap", `${UPSTREAMS.okx}/api/v5/market/ticker?instId=BTC-USDT-SWAP`),
+    safeFetch("okx_oi", `${UPSTREAMS.okx}/api/v5/public/open-interest?instId=BTC-USDT-SWAP`),
+    safeFetch("okx_fr", `${UPSTREAMS.okx}/api/v5/public/funding-rate?instId=BTC-USDT-SWAP`),
   ]);
 
   const now = Date.now();
@@ -139,27 +136,48 @@ async function handleSummary() {
     return jsonResponse({ error: "all_spot_sources_failed", ts: now }, 502);
   }
 
-  const h24 = spotB
-    ? {
-        changePct: parseFloat(spotB.priceChangePercent),
-        high: parseFloat(spotB.highPrice),
-        low: parseFloat(spotB.lowPrice),
-        quoteVolUsd: parseFloat(spotB.quoteVolume),
-        trades: parseInt(spotB.count, 10),
-      }
-    : null;
+  // ---- 24h 统计：Binance → OKX → Gate 兜底链 ----
+  let h24 = null;
 
-  // 24h 涨跌：Binance 挂了就用 OKX 现货 open24h 兜底
-  let change24 = h24?.changePct ?? null;
-  if (change24 == null && spotO?.data?.[0]) {
+  if (spotB) {
+    h24 = {
+      changePct: parseFloat(spotB.priceChangePercent),
+      high: parseFloat(spotB.highPrice),
+      low: parseFloat(spotB.lowPrice),
+      quoteVolUsd: parseFloat(spotB.quoteVolume),
+      trades: parseInt(spotB.count, 10),
+      src: "Binance",
+    };
+  } else if (spotO?.data?.[0]) {
     const t = spotO.data[0];
     const open = parseFloat(t.open24h);
-    if (open > 0) change24 = ((parseFloat(t.last) - open) / open) * 100;
+    h24 = {
+      changePct: open > 0 ? ((parseFloat(t.last) - open) / open) * 100 : null,
+      high: parseFloat(t.high24h),
+      low: parseFloat(t.low24h),
+      // 现货: vol24h=基础币量(BTC), volCcy24h=计价币量(USDT)
+      quoteVolUsd: parseFloat(t.volCcy24h || t.vol24h),
+      trades: null,
+      src: "OKX",
+    };
+  } else if (Array.isArray(spotG) && spotG[0]) {
+    const t = spotG[0];
+    h24 = {
+      changePct: parseFloat(t.change_percentage),
+      high: parseFloat(t.high),
+      low: parseFloat(t.low),
+      quoteVolUsd: parseFloat(t.quote_volume),
+      trades: null,
+      src: "Gate",
+    };
   }
 
   // ---- 合约数据：Binance（主）→ OKX（备） ----
-  let markPrice = null, fundingRate = null, nextFundingTs = null;
-  let openInterestBtc = null, oiSource = null;
+  let markPrice = null,
+    fundingRate = null,
+    nextFundingTs = null,
+    openInterestBtc = null,
+    oiSource = null;
 
   if (fapiB?.markPrice) markPrice = parseFloat(fapiB.markPrice);
   else if (okxTicker?.data?.[0]) markPrice = parseFloat(okxTicker.data[0].last);
@@ -191,7 +209,7 @@ async function handleSummary() {
 
   const payload = {
     ts: now,
-    spot: { price: spotPrice, change24, sources: spotSources },
+    spot: { price: spotPrice, change24: h24?.changePct ?? null, sources: spotSources },
     h24,
     perp: {
       markPrice,
@@ -207,42 +225,58 @@ async function handleSummary() {
 }
 
 // ---------------------------------------------------------------------------
-// /api/klines — K 线历史回补（Binance 镜像主，OKX 备）
+// /api/klines — 三源容灾：Binance 镜像 → OKX → Gate
 // ---------------------------------------------------------------------------
 
-const TF_MAP_BINANCE = { "1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h" };
-const TF_MAP_OKX = { "1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H" };
+const TF_BINANCE = { "1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h" };
+const TF_OKX = { "1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H" };
+const TF_GATE = { "1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h" };
+
+function validRows(rows) {
+  return Array.isArray(rows) && rows.length > 2;
+}
 
 async function handleKlines(tf) {
-  const bTf = TF_MAP_BINANCE[tf];
-  const oTf = TF_MAP_OKX[tf];
+  const bTf = TF_BINANCE[tf];
+  const oTf = TF_OKX[tf];
+  const gTf = TF_GATE[tf];
   if (!bTf) return jsonResponse({ error: "bad_tf" }, 400);
 
-  const [bK, oK] = await Promise.allSettled([
-    safeFetchGuarded(`${UPSTREAMS.binanceSpot}/api/v3/klines?symbol=BTCUSDT&interval=${bTf}&limit=120`),
-    safeFetchGuarded(`${UPSTREAMS.okx}/api/v5/market/candles?instId=BTC-USDT&bar=${oTf}&limit=120`),
-  ]);
-
-  const bVal = bK.status === "fulfilled" ? bK.value : null;
-  if (Array.isArray(bVal) && bVal.length) {
-    const rows = bVal.map((k) => ({
-      t: k[0],
-      o: parseFloat(k[1]), h: parseFloat(k[2]), l: parseFloat(k[3]), c: parseFloat(k[4]), v: parseFloat(k[5]),
-    }));
-    return jsonResponse({ source: "Binance", tf, rows });
+  // 1) Binance 镜像
+  const bK = await safeFetch("binance_klines", `${UPSTREAMS.binanceSpot}/api/v3/klines?symbol=BTCUSDT&interval=${bTf}&limit=120`);
+  if (Array.isArray(bK) && validRows(bK)) {
+    return jsonResponse({
+      source: "Binance",
+      tf,
+      rows: bK.map((k) => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] })),
+    });
   }
 
-  const oVal = oK.status === "fulfilled" ? oK.value : null;
-  if (Array.isArray(oVal?.data) && oVal.data.length) {
-    const rows = oVal.data
-      .slice()
-      .reverse() // OKX 返回新→旧，翻转为旧→新
-      .map((k) => ({
-        t: parseInt(k[0], 10),
-        o: parseFloat(k[1]), h: parseFloat(k[2]), l: parseFloat(k[3]), c: parseFloat(k[4]), v: parseFloat(k[5]),
-      }));
-    return jsonResponse({ source: "OKX", tf, rows });
+  // 2) OKX（limit 上限 100）
+  const oK = await safeFetch("okx_klines", `${UPSTREAMS.okx}/api/v5/market/candles?instId=BTC-USDT&bar=${oTf}&limit=100`);
+  if (Array.isArray(oK?.data) && validRows(oK.data)) {
+    return jsonResponse({
+      source: "OKX",
+      tf,
+      rows: oK.data
+        .slice()
+        .reverse() // OKX 返回新→旧
+        .map((k) => ({ t: parseInt(k[0], 10), o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] })),
+    });
   }
 
-  return jsonResponse({ error: "klines_unavailable" }, 502);
+  // 3) Gate：[ts(秒), quoteVol, close, high, low, open, baseVol]
+  const gK = await safeFetch("gate_klines", `${UPSTREAMS.gate}/api/v4/spot/candlesticks?currency_pair=BTC_USDT&interval=${gTf}&limit=120`);
+  if (Array.isArray(gK) && validRows(gK)) {
+    return jsonResponse({
+      source: "Gate",
+      tf,
+      rows: gK.map((k) => ({
+        t: parseInt(k[0], 10) * 1000,
+        o: +k[5], h: +k[3], l: +k[4], c: +k[2], v: +k[6] || 0,
+      })),
+    });
+  }
+
+  return jsonResponse({ error: "klines_unavailable", diag: lastDiag }, 502);
 }
