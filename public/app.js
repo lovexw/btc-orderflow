@@ -494,6 +494,11 @@ function renderOrderBook() {
   const ba = S.asks[0];
   if (bb && ba && S.mid) {
     const spread = ba.price - bb.price;
+    const midEl = $("ob-mid-price");
+    midEl.textContent = "$" + fmtUsd(S.mid);
+    if (S.prevPrice != null) {
+      midEl.className = "ob-mid-price " + (S.mid >= S.prevPrice ? "up" : "down");
+    }
     $("ob-spread").textContent = "$" + spread.toFixed(2) + " (" + ((spread / S.mid) * 100).toFixed(3) + "%)";
     const press = orderPressure();
     if (press != null) {

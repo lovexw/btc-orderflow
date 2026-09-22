@@ -573,7 +573,10 @@ body {
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; padding: 14px 14px 24px; gap: 14px; }
   .topbar { padding: 12px 14px; gap: 10px; }
-  .brand-sub { display: none; }
+  .brand-name { font-size: 14px; }
+  .brand-mark { width: 30px; height: 30px; font-size: 17px; }
+  .top-chip { display: none; }
+  .conn { margin-left: auto; }
   .ticker-strip { padding: 9px 14px; gap: 18px; }
   .col-right { grid-template-columns: 1fr; }
   .chart-wrap { height: 240px; }
