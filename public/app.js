@@ -469,7 +469,8 @@ function renderOrderBook() {
   const asks = S.asks.slice(0, 11).reverse(); // 高价卖单在上，贴近中间价的在底部
   if (!bids.length || !asks.length) return;
 
-  $("ob-empty").style.display = "none";
+  const obEmpty = $("ob-empty");
+  if (obEmpty) obEmpty.style.display = "none";
 
   const maxQty = Math.max(...bids.map((b) => b.qty), ...asks.map((a) => a.qty)) || 1;
 
@@ -593,7 +594,8 @@ function guessSide(t) {
 
 function renderTape() {
   if (!S.tapeRows.length) return;
-  $("tape-empty").style.display = "none";
+  const empty = $("tape-empty");
+  if (empty) empty.style.display = "none"; // 首次渲染后 innerHTML 会清掉占位符，后续调用需容错
   $("tape-count").textContent = S.sessionTrades.toLocaleString("en-US") + " 笔";
 
   const html = S.tapeRows
