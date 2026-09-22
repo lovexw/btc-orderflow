@@ -2,7 +2,9 @@
 
 真实行情 · 实时盘口 · 巨鲸警报 · 游戏化观测。像游戏一样有趣，像终端一样专业。
 
-**线上地址**：部署后填写（Cloudflare Workers 默认域 `https://btc-orderflow.<account>.workers.dev`）
+**线上地址**：<https://btc-orderflow.0471666.workers.dev>
+
+**仓库**：<https://github.com/lovexw/btc-orderflow>
 
 ---
 
